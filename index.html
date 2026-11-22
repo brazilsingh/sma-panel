@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#F1F6F5">
+<title>SMA · Social Media Automation by Planet Crust @Human</title>
+<script src="/human/config.js"></script>
+<script src="/human/boot.js"></script>
+<link rel="icon" href="assets/human-at-icon.png">
+<link rel="preload" href="assets/fonts/poppins-400-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/poppins-600-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="workspace.css">
+<script defer src="icons.js"></script>
+<script defer src="channels.js"></script>
+<script defer src="app.js"></script>
+<script defer src="workspace.js"></script>
+<script defer src="queue-client.js"></script>
+<script defer src="motion.js"></script>
+<script defer src="promo.js"></script>
+<script defer src="team.js"></script>
+<script defer src="platform-guide.js"></script>
+<script defer src="insights.js"></script>
+</head>
+<body>
+<a class="skip-link" href="#view">Skip to content</a>
+<div class="shell" id="shell">
+<aside class="sidebar" aria-label="Workspace navigation">
+  <div class="sidebar-head">
+    <a class="brandmark" href="#Overview" aria-label="SMA, Social Media Automation by Planet Crust @Human. Go to Overview" id="home-link">
+      <span class="tick-frame f1" aria-hidden="true"><span class="sma-word">SMA</span><span class="sma-full">Social Media Automation</span></span>
+      <span class="tick-frame f2" aria-hidden="true"><span class="by">by</span><img class="tick-logo" src="assets/planet-crust-logo-ink.png" alt="" width="120" height="25"><span class="tick-rule"></span><img class="tick-script" src="assets/human-script-coral.png" alt="" width="95" height="20"></span>
+    </a>
+  </div>
+  <nav id="nav" aria-label="Workspace"></nav>
+  <div class="sidebar-bottom">
+    <span class="avatar">PC</span>
+    <div class="who"><strong>Planet Crust</strong><small>Workspace owner</small></div>
+  </div>
+</aside>
+<main>
+ <header class="top">
+   <div class="top-left">
+     <button class="icon-btn" id="menu" type="button" aria-label="Collapse sidebar" aria-expanded="true" aria-controls="nav"><span data-icon="panel"></span></button>
+     <span id="crumb" class="crumb">SMA <b>/</b> Overview</span>
+   </div>
+   <button class="search-pill" id="global-search" type="button" aria-label="Search the workspace (Ctrl+K)"><span data-icon="search"></span><span class="search-label">Search posts, campaigns…</span><kbd>Ctrl K</kbd></button>
+   <div class="top-right">
+     <span class="mode">Demo workspace</span>
+     <button class="icon-btn bell" id="notification-drawer" type="button" aria-label="Notifications"><span data-icon="bell"></span><span class="bell-dot" id="bell-count" hidden></span></button>
+     <span class="avatar small" aria-hidden="true">PC</span>
+   </div>
+ </header>
+ <section class="content">
+   <div class="intro">
+     <div><h1 id="heading">Editorial calendar</h1><p id="subtitle">Plan articles, social posts, and follow-up comments in one place.</p></div>
+     <button class="primary big" id="compose" type="button"><span data-icon="plus"></span>New content</button>
+   </div>
+   <div id="view" tabindex="-1"></div>
+ </section>
+</main>
+</div>
+<div class="scrim" id="scrim" hidden></div>
+<dialog id="editor"></dialog><dialog id="workspace-dialog" class="workspace-dialog"></dialog>
+<div id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

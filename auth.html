@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Signing in · SMA</title>
+<link rel="icon" href="assets/human-at-icon.png">
+<script src="/human/config.js"></script>
+<style>body{font-family:Poppins,system-ui,sans-serif;background:#f6f8f7;color:#16211d;margin:0}main{max-width:440px;margin:15vh auto;padding:0 16px;text-align:center}a{color:#c8553d}</style>
+</head>
+<body>
+<main><h1 style="font-size:22px" id="msg">Signing you in…</h1><p id="detail"></p></main>
+<script>
+(async function () {
+  const cfg = window.SMA_HUMAN;
+  const say = (title, detail) => { document.getElementById('msg').textContent = title; document.getElementById('detail').innerHTML = detail || ''; };
+  const params = new URLSearchParams(location.search);
+  let saved = {};
+  try { saved = JSON.parse(sessionStorage.getItem('sma-oauth') || '{}'); sessionStorage.removeItem('sma-oauth'); } catch {}
+  history.replaceState(null, '', '/auth.html');
+  if (params.get('error')) return say('Sign-in was not completed', '@Human answered: ' + String(params.get('error_description') || params.get('error')).replace(/[<>&]/g, '') + '. <a href="/">Try again</a>');
+  if (!params.get('code') || !saved.state || params.get('state') !== saved.state) return say('Sign-in link expired', '<a href="/">Start again</a>');
+  try {
+    const body = new URLSearchParams({ grant_type: 'authorization_code', code: params.get('code'), redirect_uri: location.origin + '/auth.html', code_verifier: saved.verifier || '' });
+    const response = await fetch(cfg.baseUrl + '/auth/oauth2/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: 'Basic ' + btoa(cfg.clientId + ':' + cfg.clientSecret) }, body });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.access_token) throw new Error(data.error_description || data.error || 'status ' + response.status);
+    localStorage.setItem('sma-human-session', JSON.stringify({ access: data.access_token, refresh: data.refresh_token || null, expiresAt: Date.now() + Number(data.expires_in || 3600) * 1000 }));
+    const back = typeof saved.back === 'string' && saved.back.startsWith('/') && !saved.back.startsWith('//') ? saved.back : '/';
+    location.replace(back);
+  } catch (error) {
+    say('Sign-in failed', 'SMA could not finish signing you in (' + String(error.message).replace(/[<>&]/g, '') + '). <a href="/">Try again</a>');
+  }
+})();
+</script>
+</body>
+</html>
