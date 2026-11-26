@@ -25,6 +25,7 @@ export function accountFromRecord(record) {
     ...(channel && channel.length <= 60 ? { channel } : {}),
     ...(v.author_urn ? { author: v.author_urn } : {}),
     ...(v.handle ? { handle: v.handle } : {}),
+    ...(v.page_id ? { pageId: v.page_id } : {}),
     ...(v.api_version ? { apiVersion: v.api_version } : {}),
     ...(v.endpoint ? { endpoint: v.endpoint } : {}),
     ...(/^https?:\/\//.test(v.site || '') ? { site: v.site } : {}),

@@ -3,6 +3,7 @@ import { join } from '../node-shim.mjs';
 import { capabilityProblems, assertAdapter } from './adapters/contract.mjs';
 import { createFakeAdapter } from './adapters/fake.mjs';
 import { createLinkedInAdapter, linkedinCapabilities } from './adapters/linkedin.mjs';
+import { createFacebookAdapter, facebookCapabilities } from './adapters/facebook.mjs';
 import { createXAdapter, xCapabilities } from './adapters/x.mjs';
 import { createWebhookAdapter, webhookCapabilities } from './adapters/webhook.mjs';
 import { envCredentials, loadAccountsFile, normaliseAccounts, SIMULATED_ACCOUNTS } from './accounts.mjs';
@@ -25,11 +26,12 @@ const PAST_TOLERANCE_MS = 60000;
  *  - 'live':     real LinkedIn and X HTTP connectors.
  */
 export function defaultAdapters(mode, { fetch } = {}) {
-  if (mode === 'live') return [createLinkedInAdapter({ fetch }), createXAdapter({ fetch }), createWebhookAdapter({ fetch })];
+  if (mode === 'live') return [createLinkedInAdapter({ fetch }), createXAdapter({ fetch }), createFacebookAdapter({ fetch }), createWebhookAdapter({ fetch })];
   if (mode === 'simulate') {
     return [
       createFakeAdapter({ provider: 'linkedin', label: 'LinkedIn', capabilities: linkedinCapabilities, simulated: true }),
       createFakeAdapter({ provider: 'x', label: 'X', capabilities: xCapabilities, commentLabel: 'first reply', simulated: true }),
+      createFakeAdapter({ provider: 'facebook', label: 'Facebook', capabilities: facebookCapabilities, simulated: true }),
       createFakeAdapter({ provider: 'webhook', label: 'Website', capabilities: webhookCapabilities, simulated: true })
     ];
   }
@@ -174,7 +176,7 @@ export async function createPublishingService(options = {}) {
     out.destination = job.destination && {
       ...job.destination,
       provider: account?.provider || null,
-      channel: account ? account.channel || ({ linkedin: 'LinkedIn', x: 'X', webhook: 'Website' })[account.provider] || null : null,
+      channel: account ? account.channel || ({ linkedin: 'LinkedIn', x: 'X', facebook: 'Facebook', webhook: 'Website' })[account.provider] || null : null,
       accountLabel: account?.label || null,
       commentLabel: adapter?.commentLabel || 'first comment',
       simulated: adapter ? !adapter.live : null
@@ -570,7 +572,7 @@ export async function createPublishingService(options = {}) {
       return {
         id: account.id,
         provider: account.provider,
-        channel: account.channel || ({ linkedin: 'LinkedIn', x: 'X', webhook: 'Website' })[account.provider] || null,
+        channel: account.channel || ({ linkedin: 'LinkedIn', x: 'X', facebook: 'Facebook', webhook: 'Website' })[account.provider] || null,
         label: account.label || account.id,
         ...(account.site ? { site: account.site } : account.endpoint && /^https:/.test(account.endpoint) ? { site: new URL(account.endpoint).origin } : {}),
         ...(account.logo ? { logo: account.logo } : {}),

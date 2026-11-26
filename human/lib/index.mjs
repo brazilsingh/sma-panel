@@ -5,6 +5,7 @@ export { createPublishingHandler } from './src/http.mjs';
 export { createControlledClock, systemClock } from './src/clock.mjs';
 export { createFakeAdapter } from './src/adapters/fake.mjs';
 export { createLinkedInAdapter, linkedinCapabilities, escapeLittleText } from './src/adapters/linkedin.mjs';
+export { createFacebookAdapter, facebookCapabilities, FACEBOOK_DEFAULT_VERSION } from './src/adapters/facebook.mjs';
 export { createXAdapter, xCapabilities, countXText } from './src/adapters/x.mjs';
 export { capabilityProblems } from './src/adapters/contract.mjs';
 export { PublishingError, ProviderError } from './src/errors.mjs';
