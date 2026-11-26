@@ -30,6 +30,11 @@ async function connectPublishingQueue() {
     if (editor.open && active && !active.remote) openItem(currentForm());
     setInterval(() => { if (!busy) refresh().catch(() => {}); }, 5000);
   } catch (error) {
+    // Opened without the SMA server (a shared preview): run as a browser demo with example data.
+    if (!/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) {
+      label.textContent = 'Demo · example data, nothing is sent';
+      return;
+    }
     label.textContent = 'Queue unavailable';
     show(error.message);
   }
