@@ -30,8 +30,8 @@ var queueClient = { accounts: [] }; // channels.js reads connected accounts from
 
   function header() {
     if (!me.role) { who.innerHTML = ''; return; }
-    who.innerHTML = '<span>' + esc(me.scoped ? 'Review link' : (me.role === 'owner' ? 'Owner' : 'Reviewer')) + ' · ' + esc(me.name) + '</span>' +
-      (me.role === 'owner' ? '<a class="quiet" href="/">Open workspace</a>' : '') +
+    who.innerHTML = '<span>' + esc(me.scoped ? 'Review link' : ({ owner: 'Owner', writer: 'Writer', member: 'Member' }[me.role] || 'Reviewer')) + ' · ' + esc(me.name) + '</span>' +
+      (me.role && me.role !== 'reviewer' ? '<a class="quiet" href="/">Open workspace</a>' : '') +
       (me.scoped ? '' : '<button class="quiet" id="signout" type="button">Sign out</button>');
     document.getElementById('signout')?.addEventListener('click', async () => { await call('/api/team/signout', 'POST', {}); location.replace('/review'); });
   }

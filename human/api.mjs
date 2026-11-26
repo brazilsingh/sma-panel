@@ -65,6 +65,11 @@ export async function connect({ config, session, fetch, now = () => Date.now() }
   };
 
   // ---------- who is signed in ----------
+  // The highest SMA role the token carries. @Human holds the roles; SMA › Settings › Team changes them.
+  const ROLE_ORDER = ['owner', 'writer', 'reviewer', 'member'];
+  const roleFrom = roles => ROLE_ORDER.find(name => config.roles[name] && roles.includes(String(config.roles[name]))) || null;
+  const JOIN_DOMAINS = (config.joinDomains || ['planetcrust.com', 'crust.tech']).map(d => '@' + d.toLowerCase());
+  const joinable = email => JOIN_DOMAINS.some(d => String(email || '').toLowerCase().endsWith(d));
   let mePromise = null;
   function whoAmI() {
     return (mePromise ||= (async () => {
@@ -79,8 +84,9 @@ export async function connect({ config, session, fetch, now = () => Date.now() }
       } catch {}
       const id = String(claims.sub || info.sub || '');
       if (!info.email && id) { try { const user = await call('GET', '/system/users/' + id); info = { name: user.name, email: user.email, handle: user.handle }; } catch {} }
-      const role = roles.includes(config.roles.owner) ? 'owner' : roles.includes(config.roles.reviewer) ? 'reviewer' : null;
-      return { id, role, name: info.name || info.preferred_username || info.handle || info.email || 'Signed in', email: info.email || '' };
+      const role = roleFrom(roles);
+      const email = info.email || '';
+      return { id, role, name: info.name || info.preferred_username || info.handle || email || 'Signed in', email, canJoin: !role && joinable(email) };
     })().catch(error => { mePromise = null; throw error; }));
   }
 
@@ -139,7 +145,7 @@ export async function connect({ config, session, fetch, now = () => Date.now() }
   const accountOf = (ctx, job) => ctx.accountById.get(job.destination?.accountId) || null;
 
   async function writeEvents(me, recordId, title, entries) {
-    if (me.role !== 'owner') return;
+    if (me.role !== 'owner' && me.role !== 'writer') return;
     for (const entry of entries) {
       if (entry.type.startsWith('review_')) continue; // review history lives in sma_note
       const { at, type, actor, ...detail } = entry;
@@ -167,6 +173,22 @@ export async function connect({ config, session, fetch, now = () => Date.now() }
   }
   const site = () => location.origin;
 
+  // ---------- who may change what ----------
+  // Owners do everything. Writers draft, edit drafts, upload graphics and ask for review (the shared
+  // publishing rules refuse them scheduling, publishing and changing a scheduled post). Reviewers only
+  // review. Members only read.
+  function mayWrite(role, method, path) {
+    if (role === 'owner') return true;
+    if (role === 'reviewer') return /^\/posts\/[\w-]+\/review$/.test(path);
+    if (role === 'writer') return path === '/media' || path === '/posts' || (method === 'PATCH' && /^\/posts\/[\w-]+$/.test(path)) || /^\/posts\/[\w-]+\/review$/.test(path);
+    return false;
+  }
+  const forbiddenText = role => ({
+    writer: 'Only an owner can schedule, publish or cancel. Ask for review, and an owner will schedule it.',
+    reviewer: 'Only the workspace owner can do that. Reviewers can approve, suggest edits, or request changes.',
+    member: 'Members can read the workspace. Ask an owner for the writer or reviewer role to take part.'
+  })[role] || 'You have no role in SMA yet.';
+
   // ---------- publishing routes ----------
   async function publishing(method, path, body, headers, me, query) {
     const actor = { id: me.id, name: me.name, role: me.role };
@@ -187,7 +209,7 @@ export async function connect({ config, session, fetch, now = () => Date.now() }
       throw fail('not_found', 'Unknown publishing endpoint.', 404);
     }
 
-    if (me.role !== 'owner' && !/^\/posts\/[\w-]+\/review$/.test(path)) throw fail('forbidden', 'Only the workspace owner can do that. Reviewers can approve, suggest edits, or request changes.', 403);
+    if (!mayWrite(me.role, method, path)) throw fail('forbidden', forbiddenText(me.role), 403);
     if (path === '/media') return [201, { media: await uploadMedia(body) }];
 
     const ctx = await load(true);
@@ -237,7 +259,7 @@ export async function connect({ config, session, fetch, now = () => Date.now() }
 
     if (note) {
       await human.create(M.note, { post: id, kind: noteKind(note.action), text: note.text, author: /^\d+$/.test(me.id) ? me.id : '', author_name: me.name, author_role: me.role, content_version: String(before.contentVersion) });
-      if (me.role === 'owner' && note.action === 'request') {
+      if ((me.role === 'owner' || me.role === 'writer') && note.action === 'request') {
         // Mirror the review due date onto the post, but never while @Human may be working on it.
         const fresh = await human.get(M.post, id);
         if (!engineLock(fresh.values, 'edit', now(), lockMs)) {
@@ -255,11 +277,17 @@ export async function connect({ config, session, fetch, now = () => Date.now() }
   }
 
   async function requestReviewMail(post) {
-    const invites = (await human.list(M.invite)).filter(r => ['pending', 'accepted'].includes(r.values.status));
-    for (const invite of invites) {
-      const name = invite.values.invitee_name || 'there';
+    const invites = (await human.list(M.invite)).filter(r => ['pending', 'accepted'].includes(r.values.status))
+      .map(r => ({ email: r.values.email, name: r.values.invitee_name }));
+    const reviewers = M.team ? (await human.list(M.team)).filter(r => r.values.role === 'reviewer').map(r => ({ email: r.values.email, name: r.values.name })) : [];
+    const seen = new Set();
+    for (const invite of [...reviewers, ...invites]) {
+      const key = String(invite.email || '').toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      const name = invite.name || 'there';
       const due = post.review.dueAt ? '\nPlease review by ' + new Date(post.review.dueAt).toUTCString() + '.' : '';
-      await mail(invite.values.email, 'Review requested: ' + (post.title || 'a Planet Crust post'),
+      await mail(invite.email, 'Review requested: ' + (post.title || 'a Planet Crust post'),
         'Hi ' + name + ',\n\nThe Planet Crust team asked for your review of "' + (post.title || 'Untitled') + '".' + due + '\n\nOpen it here and sign in with your @Human account:\n' + site() + '/review#p=' + post.id +
         '\n\nYour review is advisory: approve and suggest edits, or request changes.', 'review_request');
     }
@@ -315,15 +343,25 @@ export async function connect({ config, session, fetch, now = () => Date.now() }
 
   // ---------- team ----------
   async function team(method, route, body, me) {
-    if (method === 'GET' && route === '/me') return { role: me.role, name: me.name, email: me.email || null, scoped: false, postId: null };
+    let m0;
+    if (method === 'GET' && route === '/me') return { role: me.role, name: me.name, email: me.email || null, scoped: false, postId: null, canJoin: Boolean(me.canJoin) };
     if (route === '/signout') { session.signOut(); return { ok: true }; }
+    if (route === '/join' && method === 'POST') return join(me);
+    if (!me.role) throw fail('forbidden', 'You have no role in SMA yet.', 403);
     if (route === '/accept') return { role: me.role, name: me.name };
+    const rosterOf = async () => (M.team ? (await human.list(M.team, { sort: 'createdAt' })) : []).map(r => ({
+      id: r.id, name: r.values.name || r.values.email, email: r.values.email, userId: r.values.user || '', role: r.values.role || 'member',
+      applied: (r.values.applied_role || '') === (r.values.role || ''), changedBy: r.values.changed_by_name || '', joinedAt: r.createdAt, you: String(r.values.user || '') === String(me.id)
+    })).filter(x => x.role !== 'removed');
+    if (method === 'GET' && route === '/roster') return { roster: await rosterOf(), canEdit: me.role === 'owner', you: me.role };
+    if ((m0 = /^\/members\/([\w-]+)\/role$/.exec(route)) && method === 'POST') return setRole(me, m0[1], String(body.role || ''), rosterOf);
     if (me.role !== 'owner') throw fail('forbidden', 'Only an owner can manage the team.', 403);
     const memberOf = r => ({ id: r.id, name: r.values.invitee_name || r.values.email, email: r.values.email, humanEmail: null,
       status: r.values.status === 'accepted' ? 'active' : 'invited', invitedAt: r.values.sent_at || r.createdAt, acceptedAt: r.values.accepted_at || null });
     if (method === 'GET' && route === '/') {
       const [invites, mails] = await Promise.all([human.list(M.invite, { sort: 'createdAt' }), human.list(M.mail, { sort: 'createdAt DESC' })]);
       return {
+        roster: M.team ? await rosterOf() : null, canEdit: true, joinDomains: JOIN_DOMAINS.map(d => d.slice(1)),
         owners: [{ id: me.id, name: me.name, email: me.email }],
         members: invites.filter(r => !['removed', 'cancelled'].includes(r.values.status)).map(memberOf),
         outbox: mails.slice(0, 50).map(r => ({ subject: r.values.subject, to: r.values.to, at: r.values.sent_at || r.createdAt, status: r.values.status || 'queued', link: null })),
@@ -358,12 +396,48 @@ export async function connect({ config, session, fetch, now = () => Date.now() }
     throw fail('not_found', 'Unknown team endpoint.', 404);
   }
 
+  // ---------- team roles ----------
+  const ROLE_NAMES = { owner: 'Owner', writer: 'Writer', reviewer: 'Reviewer', member: 'Member', removed: 'Removed' };
+  async function setRole(me, id, role, rosterOf) {
+    if (me.role !== 'owner') throw fail('forbidden', 'Only an owner can change roles.', 403);
+    if (!ROLE_NAMES[role]) throw fail('invalid_request', 'Choose owner, writer, reviewer, member or removed.');
+    const record = await human.get(M.team, id);
+    if (!record) throw fail('not_found', 'That person is not on the team.', 404);
+    if (record.values.role === role) return { member: (await rosterOf()).find(x => x.id === id) || null, unchanged: true };
+    if (record.values.role === 'owner' && role !== 'owner') {
+      const owners = (await rosterOf()).filter(x => x.role === 'owner');
+      if (owners.length <= 1) throw fail('last_owner', 'SMA needs at least one owner. Make someone else an owner first.', 409);
+    }
+    // @Human applies the role (workflow sma_team_apply) within seconds; the person gets it on their next sign-in or token refresh.
+    await human.replace(M.team, id, mergeValues(record.raw, { role, changed_by_name: me.name }));
+    return { member: (await rosterOf()).find(x => x.id === id) || null, applied: 'pending' };
+  }
+
+  async function join(me) {
+    if (me.role) return { role: me.role, joined: false };
+    if (!me.canJoin) throw fail('forbidden', 'Only ' + JOIN_DOMAINS.map(d => d.slice(1)).join(' and ') + ' accounts can join the SMA team. Ask an owner to add you.', 403);
+    if (!config.joinWorkflow) throw fail('not_configured', 'Joining is not set up on this panel.', 503);
+    const response = await call('POST', '/automation/workflows/' + config.joinWorkflow + '/exec', { wait: true }, { raw: true });
+    const data = await response.json().catch(() => ({}));
+    const error = data.error?.message || (typeof data.error === 'string' ? data.error : '');
+    if (!response.ok || error) {
+      if (/duplicate|unique|exists/i.test(error)) throw fail('already_listed', 'You are already on the SMA team list. If you cannot get in, an owner may have removed you. Ask them to set your role again.', 409);
+      throw fail('join_failed', 'SMA could not add you: ' + (error || 'status ' + response.status) + '.', 502);
+    }
+    // The role lands in @Human a moment later; a fresh token carries it.
+    const s = session.read();
+    if (s) session.write({ ...s, expiresAt: 0 });
+    mePromise = null;
+    return { joined: true, role: 'member' };
+  }
+
   // ---------- entry point ----------
   const json = (status, payload) => new Response(JSON.stringify(payload), { status, headers: { 'Content-Type': 'application/json; charset=utf-8' } });
   async function handle(url, { method = 'GET', headers = new Headers(), body } = {}) {
     try {
       const me = await whoAmI();
-      if (!me.role) throw fail('forbidden', 'Your @Human account is not in the SMA owners or SMA reviewers group.', 403);
+      const open = ['/api/team/me', '/api/team/join', '/api/team/signout'].includes(url.pathname);
+      if (!me.role && !open) throw fail('forbidden', 'Your @Human account has no role in SMA yet.', 403);
       let input = {};
       if (body !== undefined && body !== null && body !== '') {
         try { input = JSON.parse(body); } catch { throw fail('invalid_request', 'The request body is not valid JSON.'); }
@@ -385,5 +459,6 @@ export async function connect({ config, session, fetch, now = () => Date.now() }
     }
   }
   handle.me = whoAmI;
+  handle.refreshMe = () => { mePromise = null; return whoAmI(); };
   return handle;
 }

@@ -80,8 +80,38 @@
   // Owners use the workspace; reviewers land on the review page.
   loadApi().then(handler => handler.me()).then(me => {
     if (!me.role) {
-      const draw = () => { document.body.innerHTML = '<main style="max-width:480px;margin:15vh auto;padding:0 16px;font-family:Poppins,system-ui,sans-serif;text-align:center"><h1 style="font-size:22px">No access to SMA yet</h1><p style="color:#5f6b66">You are signed in to @Human as ' + String(me.name || me.email || 'this user').replace(/[<>&"]/g, '') + ', but this account is not in the SMA owners or SMA reviewers group. Ask the workspace owner to add you.</p><button id="sma-out" style="border:1px solid #ccd5d1;background:#fff;border-radius:999px;padding:8px 18px;font:inherit;cursor:pointer">Sign out</button></main>'; document.getElementById('sma-out').onclick = () => session.signOut(); };
+      const who = String(me.name || me.email || 'this user').replace(/[<>&"]/g, '');
+      const domains = (cfg.joinDomains || []).join(' or ');
+      const button = 'border-radius:999px;padding:10px 22px;font:inherit;cursor:pointer;margin:4px';
+      const draw = () => {
+        document.body.innerHTML = '<main style="max-width:480px;margin:15vh auto;padding:0 16px;font-family:Poppins,system-ui,sans-serif;text-align:center">' +
+          (me.canJoin
+            ? '<h1 style="font-size:22px">Join the SMA team</h1><p style="color:#5f6b66">You are signed in to @Human as ' + who + '. Join to see the workspace as a Member. An owner can then make you a writer, reviewer or owner.</p>' +
+              '<p id="sma-join-msg" style="color:#c8553d"></p><button id="sma-join" style="background:#c8553d;color:#fff;border:0;' + button + '">Join the SMA team</button>'
+            : '<h1 style="font-size:22px">No access to SMA yet</h1><p style="color:#5f6b66">You are signed in to @Human as ' + who + '. SMA is open to ' + domains + ' accounts. Sign in with your company account, or ask an owner to add you.</p>') +
+          '<button id="sma-out" style="border:1px solid #ccd5d1;background:#fff;' + button + '">Sign out</button></main>';
+        document.getElementById('sma-out').onclick = () => session.signOut();
+        const join = document.getElementById('sma-join');
+        if (join) join.onclick = async () => {
+          join.disabled = true; join.textContent = 'Joining…';
+          const msg = document.getElementById('sma-join-msg');
+          try {
+            const response = await window.fetch('/api/team/join', { method: 'POST' });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(data.error || 'SMA could not add you.');
+            // @Human applies the role a moment after the team record is saved; wait for a token that carries it.
+            const handler = await loadApi();
+            for (let i = 0; i < 10; i++) {
+              await new Promise(r => setTimeout(r, 1500));
+              const s = session.read(); if (s) session.write({ ...s, expiresAt: 0 });
+              if ((await handler.refreshMe()).role) return location.replace('/');
+            }
+            msg.textContent = 'You are on the team. Your access is still being set up: sign out and in again in a minute.';
+          } catch (error) { msg.textContent = error.message; join.disabled = false; join.textContent = 'Join the SMA team'; }
+        };
+      };
       document.body ? draw() : document.addEventListener('DOMContentLoaded', draw);
     } else if (me.role === 'reviewer' && page === '/') location.replace('/review');
+    else { document.documentElement.dataset.smaRole = me.role; }
   }).catch(() => {});
 })();

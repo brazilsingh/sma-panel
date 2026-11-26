@@ -17,16 +17,38 @@
   const pill = (text, cls) => '<span class="status ' + cls + '">' + e(text) + '</span>';
   const btn = (act, label, id = '', primary = false) => '<button type="button" class="' + (primary ? 'primary' : 'secondary') + '" data-team="' + act + '" data-id="' + e(id) + '">' + e(label) + '</button>';
 
+  const ROLES = [['owner', 'Owner', 'Everything: schedule, publish, cancel, manage the team.'], ['writer', 'Writer', 'Writes and edits drafts, uploads graphics, asks for review.'],
+    ['reviewer', 'Reviewer', 'Approves and suggests edits, or requests changes.'], ['member', 'Member', 'Sees the workspace, changes nothing.']];
+  const roleLabel = value => (ROLES.find(r => r[0] === value) || [value, value])[1];
+
+  // The team on @Human: everyone who joined with a company account, and the role an owner gave them.
+  function roster(team) {
+    const list = team.roster || [];
+    const domains = (team.joinDomains || ['planetcrust.com', 'crust.tech']).join(' and ');
+    const row = m => '<div class="suite-line"><div><strong>' + e(m.name) + (m.you ? ' (you)' : '') + '</strong><p class="help">' + e(m.email) +
+      (m.applied ? '' : ' · applying the new role in @Human…') + '</p></div><div class="row">' +
+      (team.canEdit
+        ? '<label class="sr-only" for="role-' + e(m.id) + '">Role for ' + e(m.name) + '</label><select id="role-' + e(m.id) + '" data-team-role="' + e(m.id) + '" data-current="' + e(m.role) + '">' +
+            ROLES.map(r => '<option value="' + r[0] + '"' + (r[0] === m.role ? ' selected' : '') + '>' + r[1] + '</option>').join('') + '<option value="removed">Remove from SMA</option></select>'
+        : pill(roleLabel(m.role), m.role === 'owner' ? 's-published' : m.role === 'reviewer' ? 's-review' : m.role === 'writer' ? 's-approved' : 's-draft')) +
+      '</div></div>';
+    return '<section class="panel suite-form"><h2>Team</h2><p class="help">Anyone with a ' + e(domains) + ' account who signs in to SMA joins as a Member. ' +
+      (team.canEdit ? 'Choose each person’s role here; it takes effect the next time they open SMA.' : 'Owners choose each person’s role.') + '</p>' +
+      '<ul class="help">' + ROLES.map(r => '<li><strong>' + r[1] + ':</strong> ' + e(r[2]) + '</li>').join('') + '</ul>' +
+      (list.length ? '<div class="team-list">' + list.map(row).join('') + '</div>' : '<p class="empty">Nobody has joined yet. Share ' + e(location.origin) + ' with your team.</p>') + '</section>';
+  }
+
   function paint(panel, team) {
+    if (!team.mail) { panel.innerHTML = roster(team); return; }
     const mail = team.mail.via === '@Human' ? 'Invites and review requests are emailed through @Human. They arrive from the @Human instance’s mail address, and replies go to the owner.'
       : team.mail.live ? 'Invites and review requests are emailed through your mail relay.'
       : team.mail.configured ? 'A mail relay is set, but this workspace is in simulation, so nothing is emailed. Copy links from the outbox below.'
       : 'No mail relay is set (SMA_MAIL_WEBHOOK), so nothing is emailed. Copy each link from the outbox below and send it yourself.';
-    panel.innerHTML =
+    panel.innerHTML = (team.roster ? roster(team) : '') + (team.roster ? '' :
       '<section class="panel suite-form"><h2>Owners</h2><p class="help">Owners write, schedule and publish. Sign-in is required when SMA runs on a public address.</p>' +
       '<div class="team-list">' + team.owners.map(o => '<div class="suite-line"><div><strong>' + e(o.name) + '</strong><p class="help">' + e(o.email) + '</p></div><div class="row">' + pill('Owner', 's-published') +
         (team.owners.length > 1 ? btn('remove-owner', 'Remove', o.id) : '') + '</div></div>').join('') + '</div>' +
-      '<form class="team-form" data-team-form="owner"><div class="split"><label>Name<input name="name" autocomplete="name"></label><label>Email<input name="email" type="email" required autocomplete="email"></label></div><button class="secondary">Add owner</button></form></section>' +
+      '<form class="team-form" data-team-form="owner"><div class="split"><label>Name<input name="name" autocomplete="name"></label><label>Email<input name="email" type="email" required autocomplete="email"></label></div><button class="secondary">Add owner</button></form></section>') +
 
       '<section class="panel suite-form"><h2>Reviewers</h2><p class="help">Reviewers can read posts and approve, suggest edits or request changes. Their review is advisory and never holds the schedule.</p>' +
       (team.members.length ? '<div class="team-list">' + team.members.map(m => '<div class="suite-line"><div><strong>' + e(m.name) + '</strong><p class="help">Invite: ' + e(m.email) +
@@ -47,7 +69,11 @@
     const panel = document.getElementById('team-panel');
     if (!panel) return;
     try { paint(panel, await api('/')); }
-    catch (error) { panel.innerHTML = '<section class="panel suite-form"><p class="help">' + e(error.message) + '</p></section>'; }
+    catch (error) {
+      // Writers, reviewers and members see the team read-only.
+      try { paint(panel, await api('/roster')); }
+      catch { panel.innerHTML = '<section class="panel suite-form"><p class="help">' + e(error.message) + '</p></section>'; }
+    }
   }
 
   async function act(run, done) {
@@ -81,6 +107,16 @@
         break;
       }
     }
+  });
+  document.addEventListener('change', event => {
+    const select = event.target.closest('[data-team-role]');
+    if (!select || !document.getElementById('team-panel')?.contains(select)) return;
+    const role = select.value;
+    const name = select.closest('.suite-line')?.querySelector('strong')?.textContent || 'this person';
+    const question = role === 'removed' ? 'Remove ' + name + ' from SMA? They lose access the next time they open it.' : 'Make ' + name + ' ' + roleLabel(role) + '?';
+    if (!confirm(question)) { select.value = select.dataset.current; return; }
+    act(() => api('/members/' + select.dataset.teamRole + '/role', 'POST', { role }), role === 'removed' ? name + ' removed.' : name + ' is now ' + roleLabel(role) + '. It takes effect the next time they open SMA.')
+      .then(() => { if (select.isConnected) select.value = select.dataset.current; });
   });
   document.addEventListener('submit', event => {
     const form = event.target.closest('[data-team-form]');

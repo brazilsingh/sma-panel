@@ -13,7 +13,8 @@ import { createMediaLibrary, decodeUpload } from './media.mjs';
 import { openFileStore } from './store.mjs';
 import { parseSchedule } from './time.mjs';
 
-export const ROLES = Object.freeze({ OWNER: 'owner', REVIEWER: 'reviewer' });
+export const ROLES = Object.freeze({ OWNER: 'owner', WRITER: 'writer', REVIEWER: 'reviewer', MEMBER: 'member' });
+// Writers draft, edit drafts and ask for review; only owners schedule, publish or cancel. Members only look.
 const PRE_DELIVERY = new Set(['draft', 'scheduled', 'failed', 'cancelled']);
 const COMMENT_OPEN = new Set(['none', 'scheduled', 'failed', 'cancelled']);
 const PAST_TOLERANCE_MS = 60000;
@@ -83,6 +84,17 @@ export async function createPublishingService(options = {}) {
     requireActor(actor);
     if (actor.role !== ROLES.OWNER) throw forbidden('Only the workspace owner can do that. Reviewers can approve, suggest edits, or request changes.');
     return actor;
+  }
+  function requireAuthor(actor) {
+    requireActor(actor);
+    if (actor.role !== ROLES.OWNER && actor.role !== ROLES.WRITER) throw forbidden('Only owners and writers can write posts. Reviewers can approve, suggest edits, or request changes.');
+    return actor;
+  }
+  // A writer prepares drafts; scheduling, publishing and changing a scheduled post stay with the owner.
+  function writerLimits(actor, job, wantsDelivery) {
+    if (actor.role !== ROLES.WRITER) return;
+    if (wantsDelivery) throw forbidden('Only an owner can schedule or publish. Ask for review, and an owner will schedule it.');
+    if (job && !['draft', 'failed', 'cancelled'].includes(job.status)) throw forbidden('This post is ' + job.status + '. Only an owner can change it now.');
   }
   const who = actor => ({ id: actor.id || actor.role, name: actor.name || actor.id || actor.role, role: actor.role });
 
@@ -301,7 +313,8 @@ export async function createPublishingService(options = {}) {
 
   // ---------- public operations ----------
   async function createPost(actor, input = {}, { idempotencyKey } = {}) {
-    requireOwner(actor);
+    requireAuthor(actor);
+    writerLimits(actor, null, typeof input === 'object' && input && Boolean(input.schedule || input.publishNow));
     if (typeof input !== 'object') throw invalid('Send the post as JSON.');
     const key = idempotencyKey || input.idempotencyKey;
     const fingerprint = createHash('sha256').update(JSON.stringify({ ...input, idempotencyKey: undefined })).digest('hex');
@@ -328,9 +341,10 @@ export async function createPublishingService(options = {}) {
   }
 
   async function updatePost(actor, id, patch = {}, { expectedVersion } = {}) {
-    requireOwner(actor);
+    requireAuthor(actor);
     return commit(draft => {
       const job = jobIn(draft, id);
+      writerLimits(actor, job, Boolean(patch.schedule || patch.publishNow));
       checkVersion(job, expectedVersion ?? patch.expectedVersion);
       const keys = Object.keys(patch).filter(k => !['expectedVersion', 'schedule', 'publishNow'].includes(k));
       if (patch.schedule && patch.publishNow) throw invalid('Choose a schedule or publish now.');
@@ -418,6 +432,7 @@ export async function createPublishingService(options = {}) {
 
   async function reviewPost(actor, id, { action, note, dueAt } = {}) {
     requireActor(actor);
+    if (actor.role === ROLES.MEMBER) throw forbidden('Members can read the workspace. Ask an owner for the writer or reviewer role to take part.');
     const text = String(note ?? '').trim();
     return commit(draft => {
       const job = jobIn(draft, id);
@@ -426,7 +441,7 @@ export async function createPublishingService(options = {}) {
       const addNote = () => { if (text) review.notes.push({ author: who(actor), text, at, contentVersion: job.contentVersion }); };
       switch (action) {
         case 'request':
-          requireOwner(actor);
+          requireAuthor(actor);
           review.status = 'pending';
           review.requestedAt = at;
           review.dueAt = dueAt ? parseSchedule(dueAt).at : review.dueAt;
